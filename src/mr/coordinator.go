@@ -6,11 +6,26 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
+	"time"
 )
 
 type Coordinator struct {
-	// Your definitions here.
+	// Files: list of file names
+	Files []string
+	// M: number of left Map tasks
+	LeftM int
+	// N: number of Reduce tasks
+	N int
 
+	LeftN int
+
+	M int
+
+	// All Map Task has been done
+	MDone bool
+
+	mu sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -20,6 +35,47 @@ type Coordinator struct {
 // the RPC argument and reply types are defined in rpc.go.
 func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
+	return nil
+}
+
+// this function will called by worker when they done their map task
+func (c *Coordinator) MapTaskDone() {
+
+}
+
+func (c *Coordinator) ReduceTaskDispatch(args *ReduceArgs, reply *ReduceReply) error {
+
+	for c.LeftM > 0 {
+		//Map tasks havent all done, put this thread into sleep
+		time.Sleep(time.Second)
+	}
+
+	c.mu.Lock()
+	if c.LeftN > 0 {
+		reply.Done = false
+		reply.M = c.M
+		reply.Nid = c.LeftN - 1
+		c.LeftN = c.LeftN - 1
+	} else {
+		reply.Done = true
+	}
+	c.mu.Unlock()
+	return nil
+}
+func (c *Coordinator) MapTaskDispatch(args *MapArgs, reply *MapReply) error {
+	//use lock to protect c to avoid race condition
+	c.mu.Lock()
+	if c.LeftM > 0 {
+		reply.Done = false
+		reply.N = c.N
+		reply.Mid = c.LeftM - 1
+		reply.File = c.Files[c.LeftM-1]
+
+		c.LeftM = c.LeftM - 1
+	} else {
+		reply.Done = true
+	}
+	c.mu.Unlock()
 	return nil
 }
 
@@ -53,8 +109,16 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 
-	// Your code here.
-
+	// Save files into the attr of coordinator struct
+	// save files = > c.Files
+	// number of files will be the numbers of map task while each map task only handle one file
+	// save len(files) = > c.M
+	// save nReduce => c.N
+	c.Files = files
+	c.LeftM = len(files)
+	c.M = len(files)
+	c.N = nReduce
+	c.LeftN = nReduce
 	c.server()
 	return &c
 }
