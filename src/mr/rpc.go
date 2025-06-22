@@ -31,7 +31,12 @@ type MapReply struct {
 	N    int //total number of reduce tasks
 	File string
 }
+type TaskDoneArgs struct {
+	Task_id int
+}
 
+type TaskDoneReply struct {
+}
 type ReduceArgs struct {
 }
 

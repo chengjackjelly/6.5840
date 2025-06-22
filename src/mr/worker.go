@@ -49,6 +49,7 @@ func Worker(mapf func(string, string) []KeyValue,
 func DoMapTask(mapf func(string, string) []KeyValue) {
 	for {
 		//  RPC for Map task
+		//TODO when map task is done, call Coordinator.MapTaskDone()
 
 		args := MapArgs{}
 		reply := MapReply{}
@@ -99,7 +100,13 @@ func DoMapTask(mapf func(string, string) []KeyValue) {
 				}
 
 				file.Close()
+
 			}
+
+			args := TaskDoneArgs{reply.Mid}
+			reply := TaskDoneReply{}
+
+			call("Coordinator.MapTaskDone", &args, &reply)
 
 		} else {
 			fmt.Printf("call failed!\n")
@@ -108,12 +115,10 @@ func DoMapTask(mapf func(string, string) []KeyValue) {
 
 	}
 }
-
 func DoReduceTask(reducef func(string, []string) string) {
 	for {
 		args := ReduceArgs{}
 		reply := ReduceReply{}
-
 		ok := call("Coordinator.ReduceTaskDispatch", &args, &reply)
 		if ok {
 			if reply.Done {
@@ -170,6 +175,11 @@ func DoReduceTask(reducef func(string, []string) string) {
 			}
 
 			ofile.Close()
+
+			args := TaskDoneArgs{reply.Nid}
+			reply := TaskDoneReply{}
+
+			call("Coordinator.ReduceTaskDone", &args, &reply)
 
 		} else {
 			fmt.Printf("call failed!\n")

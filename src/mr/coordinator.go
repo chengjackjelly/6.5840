@@ -10,22 +10,20 @@ import (
 	"time"
 )
 
+type MapTask struct {
+	worker_id   int //1 - M
+	status      int
+	assign_file string
+}
+type ReduceTask struct {
+	worker_id int // 1 - N
+	status    int
+}
 type Coordinator struct {
-	// Files: list of file names
-	Files []string
-	// M: number of left Map tasks
-	LeftM int
-	// N: number of Reduce tasks
-	N int
-
-	LeftN int
-
-	M int
-
-	// All Map Task has been done
-	MDone bool
-
-	mu sync.Mutex
+	// DS 1  Define List of Map Task
+	mapTasks    []MapTask
+	reduceTasks []ReduceTask
+	mu          sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -39,42 +37,79 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 }
 
 // this function will called by worker when they done their map task
-func (c *Coordinator) MapTaskDone() {
-
+func (c *Coordinator) MapTaskDone(args *TaskDoneArgs, reply *TaskDoneReply) error {
+	c.mu.Lock()
+	c.mapTasks[args.Task_id].status = 2
+	c.mu.Unlock()
+	return nil
 }
 
+func (c *Coordinator) ReduceTaskDone(args *TaskDoneArgs, reply *TaskDoneReply) error {
+	c.mu.Lock()
+	c.reduceTasks[args.Task_id].status = 2
+	c.mu.Unlock()
+	return nil
+}
+func (c *Coordinator) AllMapTaskDone() bool {
+
+	all_complete := true
+
+	for _, _task := range c.mapTasks {
+		if _task.status != 2 {
+			all_complete = false
+			break
+		}
+	}
+	return all_complete
+}
 func (c *Coordinator) ReduceTaskDispatch(args *ReduceArgs, reply *ReduceReply) error {
 
-	for c.LeftM > 0 {
-		//Map tasks havent all done, put this thread into sleep
+	for !c.AllMapTaskDone() {
 		time.Sleep(time.Second)
 	}
 
 	c.mu.Lock()
-	if c.LeftN > 0 {
-		reply.Done = false
-		reply.M = c.M
-		reply.Nid = c.LeftN - 1
-		c.LeftN = c.LeftN - 1
-	} else {
+	task_id := -1
+	for i, _task := range c.reduceTasks {
+		if _task.status == 0 {
+			//
+			task_id = i
+			break
+		}
+	}
+	if task_id == -1 {
 		reply.Done = true
+	} else {
+		reply.Done = false
+		c.reduceTasks[task_id].status = 1
+		reply.M = len(c.mapTasks)
+		reply.Nid = task_id
 	}
 	c.mu.Unlock()
+
 	return nil
 }
 func (c *Coordinator) MapTaskDispatch(args *MapArgs, reply *MapReply) error {
 	//use lock to protect c to avoid race condition
 	c.mu.Lock()
-	if c.LeftM > 0 {
-		reply.Done = false
-		reply.N = c.N
-		reply.Mid = c.LeftM - 1
-		reply.File = c.Files[c.LeftM-1]
-
-		c.LeftM = c.LeftM - 1
-	} else {
-		reply.Done = true
+	task_id := -1
+	for i, _task := range c.mapTasks {
+		if _task.status == 0 {
+			//
+			task_id = i
+			break
+		}
 	}
+	if task_id == -1 {
+		reply.Done = true
+	} else {
+		c.mapTasks[task_id].status = 1
+		reply.Done = false
+		reply.File = c.mapTasks[task_id].assign_file
+		reply.Mid = task_id
+		reply.N = len(c.reduceTasks)
+	}
+
 	c.mu.Unlock()
 	return nil
 }
@@ -96,11 +131,37 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
 
-	// Your code here.
+	ret := true
+	for _, _task := range c.reduceTasks {
+		if _task.status != 2 {
+			ret = false
+			break
+		}
+	}
 
 	return ret
+}
+
+func (c *Coordinator) InitMapTasks(files []string, nReduce int) {
+	c.mapTasks = make([]MapTask, len(files))
+	for i, file := range files {
+		c.mapTasks[i] = MapTask{
+			worker_id:   -1,
+			status:      0, //0 = idle, 1=in-progress, 2= complete
+			assign_file: file,
+		}
+	}
+}
+
+func (c *Coordinator) InitReduceTasks(numReduce int) {
+	c.reduceTasks = make([]ReduceTask, numReduce)
+	for i := 0; i < numReduce; i++ {
+		c.reduceTasks[i] = ReduceTask{
+			worker_id: -1, // -1 = unassigned
+			status:    0,  // 0 = idle, 1 = in-progress, 2=complete
+		}
+	}
 }
 
 // create a Coordinator.
@@ -109,16 +170,12 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 
-	// Save files into the attr of coordinator struct
-	// save files = > c.Files
-	// number of files will be the numbers of map task while each map task only handle one file
-	// save len(files) = > c.M
-	// save nReduce => c.N
-	c.Files = files
-	c.LeftM = len(files)
-	c.M = len(files)
-	c.N = nReduce
-	c.LeftN = nReduce
+	//Init MapTasks
+	c.InitMapTasks(files, nReduce)
+
+	//Init ReduceTasks
+	c.InitReduceTasks(nReduce)
+
 	c.server()
 	return &c
 }
